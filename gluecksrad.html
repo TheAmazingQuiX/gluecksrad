@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Glücksrad</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-background-primary: #ffffff;
+      --color-background-secondary: #f4f4f2;
+      --color-text-primary: #1a1a18;
+      --color-text-secondary: #6b6b67;
+      --color-border-tertiary: rgba(0,0,0,0.12);
+      --color-border-secondary: rgba(0,0,0,0.22);
+      --border-radius-md: 8px;
+      --border-radius-lg: 12px;
+      --font-sans: system-ui, -apple-system, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --color-background-primary: #1e1e1c;
+        --color-background-secondary: #2a2a28;
+        --color-text-primary: #f0f0ec;
+        --color-text-secondary: #9a9a94;
+        --color-border-tertiary: rgba(255,255,255,0.12);
+        --color-border-secondary: rgba(255,255,255,0.22);
+      }
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-background-primary);
+      color: var(--color-text-primary);
+      padding: 2rem;
+      max-width: 860px;
+      margin: 0 auto;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.5rem;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    h1 { font-size: 22px; font-weight: 500; }
+    .session-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--color-text-secondary);
+    }
+    .session-id {
+      font-family: monospace;
+      font-size: 12px;
+      background: var(--color-background-secondary);
+      border: 0.5px solid var(--color-border-tertiary);
+      border-radius: var(--border-radius-md);
+      padding: 4px 8px;
+    }
+    .copy-btn {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: var(--border-radius-md);
+      border: 0.5px solid var(--color-border-secondary);
+      background: transparent;
+      color: var(--color-text-secondary);
+      cursor: pointer;
+    }
+    .copy-btn:hover { background: var(--color-background-secondary); }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #888; flex-shrink: 0;
+      transition: background .3s;
+    }
+    .status-dot.connected { background: #1D9E75; }
+    h2 { font-size: 16px; font-weight: 500; color: var(--color-text-primary); }
+    label { font-size: 13px; color: var(--color-text-secondary); }
+    input[type=text], input[type=number] {
+      font-family: var(--font-sans);
+      font-size: 14px;
+      padding: 8px 10px;
+      border-radius: var(--border-radius-md);
+      border: 0.5px solid var(--color-border-secondary);
+      background: var(--color-background-primary);
+      color: var(--color-text-primary);
+      outline: none;
+    }
+    input[type=text]:focus, input[type=number]:focus {
+      border-color: var(--color-text-secondary);
+    }
+    input[type=text] { width: 100%; }
+    button {
+      font-family: var(--font-sans);
+      border-radius: var(--border-radius-md);
+      border: 0.5px solid var(--color-border-secondary);
+      background: transparent;
+      color: var(--color-text-primary);
+      cursor: pointer;
+      transition: background .15s, transform .1s;
+    }
+    button:hover { background: var(--color-background-secondary); }
+    button:active { transform: scale(0.98); }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    .app {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      min-height: 400px;
+    }
+    @media (max-width: 600px) { .app { grid-template-columns: 1fr; } }
+    .panel { display: flex; flex-direction: column; gap: 12px; }
+    .add-block { display: flex; flex-direction: column; gap: 8px; }
+    .add-row { display: flex; gap: 8px; align-items: stretch; }
+    #answerInput { flex: 1; font-size: 15px; padding: 10px 12px; height: 48px; }
+    #weightInput { width: 72px; font-size: 15px; padding: 10px 8px; height: 48px; text-align: center; }
+    .add-btn {
+      height: 48px; padding: 0 16px; font-size: 20px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .weight-hint { font-size: 11px; color: var(--color-text-secondary); }
+    .answers-list {
+      display: flex; flex-direction: column; gap: 6px;
+      max-height: 230px; overflow-y: auto;
+    }
+    .answer-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px;
+      border-radius: var(--border-radius-md);
+      border: 0.5px solid var(--color-border-tertiary);
+      background: var(--color-background-secondary);
+    }
+    .answer-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .answer-label {
+      flex: 1; font-size: 13px; color: var(--color-text-primary);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .answer-weight { font-size: 12px; color: var(--color-text-secondary); min-width: 28px; }
+    .plus-btn {
+      width: 24px; height: 24px; border-radius: 50%;
+      font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .del-btn {
+      width: 20px; height: 20px; border-radius: 50%; border: none;
+      font-size: 14px; color: var(--color-text-secondary);
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .del-btn:hover { color: #e24b4a; background: transparent; }
+    .spin-btn { width: 100%; padding: 10px; font-size: 15px; font-weight: 500; }
+    .wheel-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+    .question-display {
+      font-size: 14px; font-weight: 500; color: var(--color-text-primary);
+      text-align: center; min-height: 20px;
+    }
+    .pointer-wrap { position: relative; width: 260px; }
+    .pointer-label { text-align: center; font-size: 12px; color: var(--color-text-secondary); margin-bottom: 2px; }
+    .pointer { text-align: center; font-size: 22px; line-height: 1; margin-bottom: -4px; }
+    canvas { display: block; }
+    .winner-box {
+      background: var(--color-background-secondary);
+      border: 0.5px solid var(--color-border-tertiary);
+      border-radius: var(--border-radius-md);
+      padding: 8px 16px; text-align: center; min-height: 36px; width: 100%;
+    }
+    .winner-box .wlabel { font-size: 11px; color: var(--color-text-secondary); }
+    .winner-box .wname { font-size: 15px; font-weight: 500; color: var(--color-text-primary); margin-top: 2px; }
+    .empty { font-size: 13px; color: var(--color-text-secondary); text-align: center; padding: 20px 0; }
+    .loading { font-size: 13px; color: var(--color-text-secondary); text-align: center; padding: 20px 0; }
+    .config-warning {
+      background: #FAEEDA; color: #633806;
+      border: 0.5px solid #EF9F27;
+      border-radius: var(--border-radius-md);
+      padding: 12px 16px; font-size: 13px; margin-bottom: 1.5rem;
+      display: none;
+    }
+    .config-warning code {
+      font-family: monospace; background: rgba(0,0,0,0.08);
+      padding: 1px 4px; border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="config-warning" id="configWarning">
+    ⚠️ Bitte trage deine Supabase-Zugangsdaten ein: <code>SUPABASE_URL</code> und <code>SUPABASE_ANON_KEY</code> im &lt;script&gt;-Block am Ende der Datei.
+  </div>
+
+  <div class="topbar">
+    <h1>🎡 Glücksrad</h1>
+    <div class="session-bar">
+      <div class="status-dot" id="statusDot" title="Verbindungsstatus"></div>
+      <span>Session:</span>
+      <span class="session-id" id="sessionIdDisplay">–</span>
+      <button class="copy-btn" onclick="copyLink()" title="Link kopieren">
+        <i class="ti ti-link" aria-hidden="true"></i> Link kopieren
+      </button>
+      <button class="copy-btn" onclick="newSession()" title="Neue Session">
+        <i class="ti ti-refresh" aria-hidden="true"></i> Neu
+      </button>
+    </div>
+  </div>
+
+  <div class="app">
+    <div class="panel">
+      <h2>Frage & Antworten</h2>
+      <div>
+        <label>Frage</label>
+        <input type="text" id="questionInput" placeholder="Deine Frage eingeben…" style="margin-top:4px">
+      </div>
+      <div class="add-block">
+        <label>Neue Antwort</label>
+        <div class="add-row">
+          <input type="text" id="answerInput" placeholder="Antwortmöglichkeit eingeben…">
+          <input type="number" id="weightInput" min="1" max="99" value="1" title="Gewichtung">
+          <button class="add-btn" onclick="addAnswer()" aria-label="Antwort hinzufügen">
+            <i class="ti ti-plus" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div class="weight-hint">Zahl = Gewichtung (höher = wahrscheinlicher)</div>
+      </div>
+      <div class="answers-list" id="answersList">
+        <div class="loading">Verbinde mit Datenbank…</div>
+      </div>
+      <button class="spin-btn" id="spinBtn" onclick="spin()" disabled>SPIN 🎡</button>
+    </div>
+
+    <div class="wheel-wrap panel">
+      <div class="question-display" id="questionDisplay">–</div>
+      <div class="pointer-wrap">
+        <div class="pointer-label">Gewinner</div>
+        <div class="pointer">▼</div>
+        <canvas id="wheel" width="260" height="260" role="img" aria-label="Glücksrad">Glücksrad</canvas>
+      </div>
+      <div class="winner-box">
+        <div class="wlabel">Ergebnis</div>
+        <div class="wname" id="winnerName">–</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ─────────────────────────────────────────────
+    //  ► HIER DEINE SUPABASE-ZUGANGSDATEN EINTRAGEN
+    // ─────────────────────────────────────────────
+    const SUPABASE_URL      = 'https://byyoffjmwpsptkxgjtzc.supabase.co';   // z.B. https://xxxx.supabase.co
+    const SUPABASE_ANON_KEY = 'sb_publishable_pCw9WJ-HeLlQu8WGFbvQow_kq61JWPB'; // langer JWT-String
+    // ─────────────────────────────────────────────
+
+    const COLORS = ['#7F77DD','#1D9E75','#D85A30','#378ADD','#D4537E','#639922','#BA7517','#E24B4A','#888780','#3C3489','#0F6E56','#993C1D'];
+    let answers = [];
+    let spinning = false;
+    let currentAngle = 0;
+    let supabase = null;
+    let sessionId = '';
+
+    // ── Config check ──
+    if (SUPABASE_URL === 'DEINE_SUPABASE_URL' || SUPABASE_ANON_KEY === 'DEIN_ANON_PUBLIC_KEY') {
+      document.getElementById('configWarning').style.display = 'block';
+    }
+
+    // ── Session-ID aus URL oder neu generieren ──
+    function getOrCreateSessionId() {
+      const params = new URLSearchParams(location.search);
+      let sid = params.get('session');
+      if (!sid) {
+        sid = Math.random().toString(36).slice(2, 10);
+        const url = new URL(location.href);
+        url.searchParams.set('session', sid);
+        history.replaceState({}, '', url);
+      }
+      return sid;
+    }
+
+    function newSession() {
+      const url = new URL(location.href);
+      const sid = Math.random().toString(36).slice(2, 10);
+      url.searchParams.set('session', sid);
+      location.href = url;
+    }
+
+    function copyLink() {
+      navigator.clipboard.writeText(location.href).then(() => {
+        const btn = document.querySelector('.copy-btn');
+        btn.textContent = '✓ Kopiert!';
+        setTimeout(() => { btn.innerHTML = '<i class="ti ti-link"></i> Link kopieren'; }, 2000);
+      });
+    }
+
+    function getColor(i) { return COLORS[i % COLORS.length]; }
+
+    // ── Supabase init & Echtzeit-Sync ──
+    async function initSupabase() {
+      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      sessionId = getOrCreateSessionId();
+      document.getElementById('sessionIdDisplay').textContent = sessionId;
+
+      await loadAnswers();
+
+      // Echtzeit-Kanal für diese Session
+      supabase
+        .channel('answers-' + sessionId)
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'answers',
+          filter: `session_id=eq.${sessionId}`
+        }, () => loadAnswers())
+        .subscribe(status => {
+          const dot = document.getElementById('statusDot');
+          dot.className = 'status-dot' + (status === 'SUBSCRIBED' ? ' connected' : '');
+        });
+    }
+
+    async function loadAnswers() {
+      const { data, error } = await supabase
+        .from('answers')
+        .select('*')
+        .eq('session_id', sessionId)
+        .order('created_at', { ascending: true });
+
+      if (error) { console.error('Laden fehlgeschlagen:', error); return; }
+      answers = data.map(row => ({
+        id: row.id,
+        label: row.label,
+        weight: row.weight,
+        color: row.color
+      }));
+      render();
+    }
+
+    async function addAnswer() {
+      const label = document.getElementById('answerInput').value.trim();
+      const weight = parseInt(document.getElementById('weightInput').value) || 1;
+      if (!label) return;
+
+      const color = getColor(answers.length);
+      const { error } = await supabase.from('answers').insert({
+        session_id: sessionId,
+        label,
+        weight,
+        color
+      });
+      if (error) { console.error('Einfügen fehlgeschlagen:', error); return; }
+
+      document.getElementById('answerInput').value = '';
+      document.getElementById('weightInput').value = '1';
+      document.getElementById('answerInput').focus();
+    }
+
+    async function removeAnswer(id) {
+      const { error } = await supabase.from('answers').delete().eq('id', id);
+      if (error) console.error('Löschen fehlgeschlagen:', error);
+    }
+
+    async function incWeight(id, currentWeight) {
+      const { error } = await supabase
+        .from('answers')
+        .update({ weight: currentWeight + 1 })
+        .eq('id', id);
+      if (error) console.error('Update fehlgeschlagen:', error);
+    }
+
+    // ── UI ──
+    function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    function render() {
+      const list = document.getElementById('answersList');
+      const spinBtn = document.getElementById('spinBtn');
+      const qd = document.getElementById('questionDisplay');
+      const q = document.getElementById('questionInput').value.trim();
+      qd.textContent = q || '–';
+      spinBtn.disabled = answers.length < 2 || spinning;
+
+      if (answers.length === 0) {
+        list.innerHTML = '<div class="empty">Noch keine Antworten. Füge welche hinzu!</div>';
+      } else {
+        list.innerHTML = answers.map(a => `
+          <div class="answer-item">
+            <div class="answer-dot" style="background:${a.color}"></div>
+            <span class="answer-label">${escHtml(a.label)}</span>
+            <span class="answer-weight">×${a.weight}</span>
+            <button class="plus-btn" onclick="incWeight('${a.id}',${a.weight})" title="Gewichtung +1">+</button>
+            <button class="del-btn" onclick="removeAnswer('${a.id}')" title="Entfernen">✕</button>
+          </div>`).join('');
+      }
+      drawWheel(currentAngle);
+    }
+
+    // ── Canvas ──
+    function drawWheel(rotOffset) {
+      const canvas = document.getElementById('wheel');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height;
+      const cx = W / 2, cy = H / 2, r = Math.min(cx, cy) - 8;
+      ctx.clearRect(0, 0, W, H);
+
+      if (answers.length === 0) {
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = '#e8e8e6'; ctx.fill(); return;
+      }
+
+      const total = answers.reduce((s, a) => s + a.weight, 0);
+      let start = rotOffset;
+      answers.forEach(a => {
+        const slice = (a.weight / total) * Math.PI * 2;
+        ctx.beginPath(); ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, r, start, start + slice); ctx.closePath();
+        ctx.fillStyle = a.color; ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+
+        const mid = start + slice / 2;
+        const tx = cx + Math.cos(mid) * r * 0.65;
+        const ty = cy + Math.sin(mid) * r * 0.65;
+        const fontSize = Math.max(9, Math.min(13, r * 0.13));
+        ctx.save(); ctx.translate(tx, ty); ctx.rotate(mid + Math.PI / 2);
+        ctx.fillStyle = '#fff';
+        ctx.font = `500 ${fontSize}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(a.label.length > 14 ? a.label.slice(0, 13) + '…' : a.label, 0, 0);
+        ctx.restore();
+        start += slice;
+      });
+
+      ctx.beginPath(); ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,.2)'; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    function getWinnerAtTop(angle) {
+      const total = answers.reduce((s, a) => s + a.weight, 0);
+      let norm = ((-Math.PI / 2 - angle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+      let acc = 0;
+      for (let i = 0; i < answers.length; i++) {
+        acc += (answers[i].weight / total) * Math.PI * 2;
+        if (norm < acc) return i;
+      }
+      return 0;
+    }
+
+    function spin() {
+      if (spinning || answers.length < 2) return;
+      spinning = true;
+      document.getElementById('spinBtn').disabled = true;
+      document.getElementById('winnerName').textContent = '…';
+
+      const total = answers.reduce((s, a) => s + a.weight, 0);
+      const rand = Math.random() * total;
+      let acc = 0, winIdx = 0;
+      for (let i = 0; i < answers.length; i++) {
+        acc += answers[i].weight;
+        if (rand < acc) { winIdx = i; break; }
+      }
+
+      const sliceSize = (answers[winIdx].weight / total) * Math.PI * 2;
+      const sliceMid = answers.slice(0, winIdx).reduce((s, a) => s + (a.weight / total) * Math.PI * 2, 0) + sliceSize / 2;
+      const targetAngle = -Math.PI / 2 - sliceMid;
+      const fullSpins = Math.PI * 2 * (6 + Math.floor(Math.random() * 4));
+      const endAngle = currentAngle + fullSpins + ((targetAngle - currentAngle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+
+      const duration = 3500, startAngle = currentAngle, startTime = performance.now();
+      const easeOut = t => 1 - Math.pow(1 - t, 4);
+
+      (function frame(now) {
+        const t = Math.min((now - startTime) / duration, 1);
+        currentAngle = startAngle + (endAngle - startAngle) * easeOut(t);
+        drawWheel(currentAngle);
+        if (t < 1) { requestAnimationFrame(frame); }
+        else {
+          currentAngle = endAngle % (Math.PI * 2);
+          document.getElementById('winnerName').textContent = answers[getWinnerAtTop(currentAngle)].label;
+          spinning = false;
+          document.getElementById('spinBtn').disabled = false;
+        }
+      })(startTime);
+    }
+
+    document.getElementById('questionInput').addEventListener('input', render);
+    document.getElementById('answerInput').addEventListener('keydown', e => { if (e.key === 'Enter') addAnswer(); });
+
+    drawWheel(0);
+    initSupabase();
+  </script>
+</body>
+</html>
