@@ -245,8 +245,8 @@
     // ─────────────────────────────────────────────
     //  ► HIER DEINE SUPABASE-ZUGANGSDATEN EINTRAGEN
     // ─────────────────────────────────────────────
-    const SUPABASE_URL      = 'https://byyoffjmwpsptkxgjtzc.supabase.co';   // z.B. https://xxxx.supabase.co
-    const SUPABASE_ANON_KEY = 'sb_publishable_pCw9WJ-HeLlQu8WGFbvQow_kq61JWPB'; // langer JWT-String
+    const SUPABASE_URL      = 'https://byyoffjmwpsptkxgjtzc.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_pCw9WJ-HeLlQu8WGFbvQow_kq61JWPB';
     // ─────────────────────────────────────────────
 
     const COLORS = ['#7F77DD','#1D9E75','#D85A30','#378ADD','#D4537E','#639922','#BA7517','#E24B4A','#888780','#3C3489','#0F6E56','#993C1D'];
@@ -255,13 +255,12 @@
     let currentAngle = 0;
     let sb = null;
     let sessionId = '';
+    let pollInterval = null;
 
-    // ── Config check ──
     if (SUPABASE_URL === 'DEINE_SUPABASE_URL' || SUPABASE_ANON_KEY === 'DEIN_ANON_PUBLIC_KEY') {
       document.getElementById('configWarning').style.display = 'block';
     }
 
-    // ── Session-ID aus URL oder neu generieren ──
     function getOrCreateSessionId() {
       const params = new URLSearchParams(location.search);
       let sid = params.get('session');
@@ -276,75 +275,104 @@
 
     function newSession() {
       const url = new URL(location.href);
-      const sid = Math.random().toString(36).slice(2, 10);
-      url.searchParams.set('session', sid);
+      url.searchParams.set('session', Math.random().toString(36).slice(2, 10));
       location.href = url;
     }
 
     function copyLink() {
       navigator.clipboard.writeText(location.href).then(() => {
         const btn = document.querySelector('.copy-btn');
-        btn.textContent = '✓ Kopiert!';
+        btn.innerHTML = '✓ Kopiert!';
         setTimeout(() => { btn.innerHTML = '<i class="ti ti-link"></i> Link kopieren'; }, 2000);
       });
     }
 
     function getColor(i) { return COLORS[i % COLORS.length]; }
 
-    // ── Supabase init & Echtzeit-Sync ──
+    // ── Supabase init ──
     async function initSupabase() {
       sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
       sessionId = getOrCreateSessionId();
       document.getElementById('sessionIdDisplay').textContent = sessionId;
 
-      await loadAnswers();
+      await loadAll();
 
-      // Echtzeit-Kanal für diese Session (Supabase JS v2)
-      sb
-        .channel('answers-' + sessionId)
+      // Echtzeit-Kanal für Antworten
+      sb.channel('answers-' + sessionId)
         .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'answers',
-          filter: `session_id=eq.${sessionId}`
-        }, () => loadAnswers())
+          event: '*', schema: 'public', table: 'answers',
+          filter: 'session_id=eq.' + sessionId
+        }, () => loadAll())
         .subscribe(status => {
           const dot = document.getElementById('statusDot');
           dot.className = 'status-dot' + (status === 'SUBSCRIBED' ? ' connected' : '');
         });
+
+      // Echtzeit-Kanal für Frage
+      sb.channel('sessions-' + sessionId)
+        .on('postgres_changes', {
+          event: '*', schema: 'public', table: 'sessions',
+          filter: 'session_id=eq.' + sessionId
+        }, () => loadQuestion())
+        .subscribe();
+
+      // Fallback-Polling alle 3 Sekunden
+      pollInterval = setInterval(loadAll, 3000);
     }
 
+    // ── Frage laden ──
+    async function loadQuestion() {
+      const { data } = await sb
+        .from('sessions')
+        .select('question')
+        .eq('session_id', sessionId)
+        .maybeSingle();
+      if (data && data.question !== undefined) {
+        const input = document.getElementById('questionInput');
+        if (input !== document.activeElement) {
+          input.value = data.question || '';
+          document.getElementById('questionDisplay').textContent = data.question || '–';
+        }
+      }
+    }
+
+    // ── Frage speichern ──
+    async function saveQuestion(question) {
+      await sb.from('sessions').upsert(
+        { session_id: sessionId, question },
+        { onConflict: 'session_id' }
+      );
+    }
+
+    // ── Antworten laden ──
     async function loadAnswers() {
       const { data, error } = await sb
         .from('answers')
         .select('*')
         .eq('session_id', sessionId)
         .order('created_at', { ascending: true });
-
       if (error) { console.error('Laden fehlgeschlagen:', error); return; }
       answers = data.map(row => ({
-        id: row.id,
-        label: row.label,
-        weight: row.weight,
-        color: row.color
+        id: row.id, label: row.label, weight: row.weight, color: row.color
       }));
-      render();
+      renderList();
     }
 
+    // ── Beides laden ──
+    async function loadAll() {
+      await Promise.all([loadQuestion(), loadAnswers()]);
+    }
+
+    // ── Antwort hinzufügen ──
     async function addAnswer() {
       const label = document.getElementById('answerInput').value.trim();
       const weight = parseInt(document.getElementById('weightInput').value) || 1;
       if (!label) return;
-
       const color = getColor(answers.length);
       const { error } = await sb.from('answers').insert({
-        session_id: sessionId,
-        label,
-        weight,
-        color
+        session_id: sessionId, label, weight, color
       });
       if (error) { console.error('Einfügen fehlgeschlagen:', error); return; }
-
       document.getElementById('answerInput').value = '';
       document.getElementById('weightInput').value = '1';
       document.getElementById('answerInput').focus();
@@ -356,22 +384,18 @@
     }
 
     async function incWeight(id, currentWeight) {
-      const { error } = await sb
-        .eq('id', id);
+      const { error } = await sb.from('answers')
+        .update({ weight: currentWeight + 1 }).eq('id', id);
       if (error) console.error('Update fehlgeschlagen:', error);
     }
 
     // ── UI ──
     function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-    function render() {
+    function renderList() {
       const list = document.getElementById('answersList');
       const spinBtn = document.getElementById('spinBtn');
-      const qd = document.getElementById('questionDisplay');
-      const q = document.getElementById('questionInput').value.trim();
-      qd.textContent = q || '–';
       spinBtn.disabled = answers.length < 2 || spinning;
-
       if (answers.length === 0) {
         list.innerHTML = '<div class="empty">Noch keine Antworten. Füge welche hinzu!</div>';
       } else {
@@ -392,47 +416,40 @@
       const canvas = document.getElementById('wheel');
       const ctx = canvas.getContext('2d');
       const W = canvas.width, H = canvas.height;
-      const cx = W / 2, cy = H / 2, r = Math.min(cx, cy) - 8;
-      ctx.clearRect(0, 0, W, H);
-
+      const cx = W/2, cy = H/2, r = Math.min(cx,cy)-8;
+      ctx.clearRect(0,0,W,H);
       if (answers.length === 0) {
-        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
         ctx.fillStyle = '#e8e8e6'; ctx.fill(); return;
       }
-
-      const total = answers.reduce((s, a) => s + a.weight, 0);
+      const total = answers.reduce((s,a) => s+a.weight, 0);
       let start = rotOffset;
       answers.forEach(a => {
-        const slice = (a.weight / total) * Math.PI * 2;
-        ctx.beginPath(); ctx.moveTo(cx, cy);
-        ctx.arc(cx, cy, r, start, start + slice); ctx.closePath();
+        const slice = (a.weight/total)*Math.PI*2;
+        ctx.beginPath(); ctx.moveTo(cx,cy);
+        ctx.arc(cx,cy,r,start,start+slice); ctx.closePath();
         ctx.fillStyle = a.color; ctx.fill();
         ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
-
-        const mid = start + slice / 2;
-        const tx = cx + Math.cos(mid) * r * 0.65;
-        const ty = cy + Math.sin(mid) * r * 0.65;
-        const fontSize = Math.max(9, Math.min(13, r * 0.13));
-        ctx.save(); ctx.translate(tx, ty); ctx.rotate(mid + Math.PI / 2);
-        ctx.fillStyle = '#fff';
-        ctx.font = `500 ${fontSize}px sans-serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(a.label.length > 14 ? a.label.slice(0, 13) + '…' : a.label, 0, 0);
-        ctx.restore();
-        start += slice;
+        const mid = start+slice/2;
+        const tx = cx+Math.cos(mid)*r*0.65, ty = cy+Math.sin(mid)*r*0.65;
+        const fontSize = Math.max(9, Math.min(13, r*0.13));
+        ctx.save(); ctx.translate(tx,ty); ctx.rotate(mid+Math.PI/2);
+        ctx.fillStyle='#fff'; ctx.font=`500 ${fontSize}px sans-serif`;
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(a.label.length>14 ? a.label.slice(0,13)+'…' : a.label, 0, 0);
+        ctx.restore(); start+=slice;
       });
-
-      ctx.beginPath(); ctx.arc(cx, cy, 12, 0, Math.PI * 2);
-      ctx.fillStyle = '#fff'; ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,.2)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx,cy,12,0,Math.PI*2);
+      ctx.fillStyle='#fff'; ctx.fill();
+      ctx.strokeStyle='rgba(0,0,0,.2)'; ctx.lineWidth=1; ctx.stroke();
     }
 
     function getWinnerAtTop(angle) {
-      const total = answers.reduce((s, a) => s + a.weight, 0);
-      let norm = ((-Math.PI / 2 - angle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+      const total = answers.reduce((s,a) => s+a.weight, 0);
+      let norm = ((-Math.PI/2-angle)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
       let acc = 0;
-      for (let i = 0; i < answers.length; i++) {
-        acc += (answers[i].weight / total) * Math.PI * 2;
+      for (let i=0; i<answers.length; i++) {
+        acc += (answers[i].weight/total)*Math.PI*2;
         if (norm < acc) return i;
       }
       return 0;
@@ -443,40 +460,48 @@
       spinning = true;
       document.getElementById('spinBtn').disabled = true;
       document.getElementById('winnerName').textContent = '…';
+      if (pollInterval) clearInterval(pollInterval);
 
-      const total = answers.reduce((s, a) => s + a.weight, 0);
-      const rand = Math.random() * total;
-      let acc = 0, winIdx = 0;
-      for (let i = 0; i < answers.length; i++) {
+      const total = answers.reduce((s,a) => s+a.weight, 0);
+      const rand = Math.random()*total;
+      let acc=0, winIdx=0;
+      for (let i=0; i<answers.length; i++) {
         acc += answers[i].weight;
-        if (rand < acc) { winIdx = i; break; }
+        if (rand < acc) { winIdx=i; break; }
       }
-
-      const sliceSize = (answers[winIdx].weight / total) * Math.PI * 2;
-      const sliceMid = answers.slice(0, winIdx).reduce((s, a) => s + (a.weight / total) * Math.PI * 2, 0) + sliceSize / 2;
-      const targetAngle = -Math.PI / 2 - sliceMid;
-      const fullSpins = Math.PI * 2 * (6 + Math.floor(Math.random() * 4));
-      const endAngle = currentAngle + fullSpins + ((targetAngle - currentAngle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-
-      const duration = 3500, startAngle = currentAngle, startTime = performance.now();
-      const easeOut = t => 1 - Math.pow(1 - t, 4);
-
+      const sliceSize = (answers[winIdx].weight/total)*Math.PI*2;
+      const sliceMid = answers.slice(0,winIdx).reduce((s,a) => s+(a.weight/total)*Math.PI*2,0)+sliceSize/2;
+      const targetAngle = -Math.PI/2-sliceMid;
+      const fullSpins = Math.PI*2*(6+Math.floor(Math.random()*4));
+      const endAngle = currentAngle+fullSpins+((targetAngle-currentAngle)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
+      const duration=3500, startAngle=currentAngle, startTime=performance.now();
+      const easeOut = t => 1-Math.pow(1-t,4);
       (function frame(now) {
-        const t = Math.min((now - startTime) / duration, 1);
-        currentAngle = startAngle + (endAngle - startAngle) * easeOut(t);
+        const t = Math.min((now-startTime)/duration,1);
+        currentAngle = startAngle+(endAngle-startAngle)*easeOut(t);
         drawWheel(currentAngle);
-        if (t < 1) { requestAnimationFrame(frame); }
+        if (t<1) { requestAnimationFrame(frame); }
         else {
-          currentAngle = endAngle % (Math.PI * 2);
+          currentAngle = endAngle%(Math.PI*2);
           document.getElementById('winnerName').textContent = answers[getWinnerAtTop(currentAngle)].label;
           spinning = false;
           document.getElementById('spinBtn').disabled = false;
+          pollInterval = setInterval(loadAll, 3000);
         }
       })(startTime);
     }
 
-    document.getElementById('questionInput').addEventListener('input', render);
-    document.getElementById('answerInput').addEventListener('keydown', e => { if (e.key === 'Enter') addAnswer(); });
+    // Frage mit Debounce speichern
+    let questionTimer = null;
+    document.getElementById('questionInput').addEventListener('input', e => {
+      document.getElementById('questionDisplay').textContent = e.target.value || '–';
+      clearTimeout(questionTimer);
+      questionTimer = setTimeout(() => saveQuestion(e.target.value.trim()), 600);
+    });
+
+    document.getElementById('answerInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') addAnswer();
+    });
 
     drawWheel(0);
     initSupabase();
