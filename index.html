@@ -253,7 +253,7 @@
     let answers = [];
     let spinning = false;
     let currentAngle = 0;
-    let supabase = null;
+    let sb = null;
     let sessionId = '';
 
     // ── Config check ──
@@ -293,15 +293,14 @@
 
     // ── Supabase init & Echtzeit-Sync ──
     async function initSupabase() {
-      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
       sessionId = getOrCreateSessionId();
       document.getElementById('sessionIdDisplay').textContent = sessionId;
 
       await loadAnswers();
 
       // Echtzeit-Kanal für diese Session
-      supabase
-        .channel('answers-' + sessionId)
+      sb
         .on('postgres_changes', {
           event: '*',
           schema: 'public',
@@ -315,7 +314,7 @@
     }
 
     async function loadAnswers() {
-      const { data, error } = await supabase
+      const { data, error } = await sb
         .from('answers')
         .select('*')
         .eq('session_id', sessionId)
@@ -337,7 +336,7 @@
       if (!label) return;
 
       const color = getColor(answers.length);
-      const { error } = await supabase.from('answers').insert({
+      const { error } = await sb.from('answers').insert({
         session_id: sessionId,
         label,
         weight,
@@ -351,14 +350,12 @@
     }
 
     async function removeAnswer(id) {
-      const { error } = await supabase.from('answers').delete().eq('id', id);
+      const { error } = await sb.from('answers').delete().eq('id', id);
       if (error) console.error('Löschen fehlgeschlagen:', error);
     }
 
     async function incWeight(id, currentWeight) {
-      const { error } = await supabase
-        .from('answers')
-        .update({ weight: currentWeight + 1 })
+      const { error } = await sb
         .eq('id', id);
       if (error) console.error('Update fehlgeschlagen:', error);
     }
