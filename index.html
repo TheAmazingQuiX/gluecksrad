@@ -207,11 +207,11 @@
     <div class="panel">
       <h2>Frage & Antworten</h2>
       <div>
-        <label>Frage</label>
+        <label for="questionInput">Frage</label>
         <input type="text" id="questionInput" placeholder="Deine Frage eingeben…" style="margin-top:4px">
       </div>
       <div class="add-block">
-        <label>Neue Antwort</label>
+        <label for="answerInput">Neue Antwort</label>
         <div class="add-row">
           <input type="text" id="answerInput" placeholder="Antwortmöglichkeit eingeben…">
           <input type="number" id="weightInput" min="1" max="99" value="1" title="Gewichtung">
@@ -317,31 +317,37 @@
         .subscribe();
 
       // Fallback-Polling alle 3 Sekunden
-      pollInterval = setInterval(loadAll, 3000);
+      pollInterval = setInterval(loadAll, 2000); console.log("Polling gestartet (alle 2s)");
+      await testConnection();
     }
 
     // ── Frage laden ──
     async function loadQuestion() {
-      const { data } = await sb
+      const { data, error } = await sb
         .from('sessions')
         .select('question')
         .eq('session_id', sessionId)
         .maybeSingle();
-      if (data && data.question !== undefined) {
+      if (error) { console.error('Frage laden fehlgeschlagen:', error.message); return; }
+      if (data) {
         const input = document.getElementById('questionInput');
-        if (input !== document.activeElement) {
-          input.value = data.question || '';
-          document.getElementById('questionDisplay').textContent = data.question || '–';
+        const q = data.question || '';
+        // Nur überschreiben wenn Nutzer gerade nicht tippt
+        if (document.activeElement !== input) {
+          input.value = q;
         }
+        document.getElementById('questionDisplay').textContent = q || '–';
       }
     }
 
     // ── Frage speichern ──
     async function saveQuestion(question) {
-      await sb.from('sessions').upsert(
-        { session_id: sessionId, question },
+      const { error } = await sb.from('sessions').upsert(
+        { session_id: sessionId, question, updated_at: new Date().toISOString() },
         { onConflict: 'session_id' }
       );
+      if (error) console.error('Frage speichern fehlgeschlagen:', error.message, error);
+      else console.log('Frage gespeichert:', question);
     }
 
     // ── Antworten laden ──
@@ -361,6 +367,20 @@
     // ── Beides laden ──
     async function loadAll() {
       await Promise.all([loadQuestion(), loadAnswers()]);
+    }
+
+    // ── Verbindung testen ──
+    async function testConnection() {
+      const { error } = await sb.from('answers').select('id').limit(1);
+      if (error) {
+        console.error('Datenbankverbindung fehlgeschlagen:', error.message);
+        document.getElementById('statusDot').style.background = '#E24B4A';
+      } else {
+        console.log('Datenbankverbindung OK');
+      }
+      const { error: e2 } = await sb.from('sessions').select('session_id').limit(1);
+      if (e2) console.error('Tabelle "sessions" fehlt oder nicht erreichbar:', e2.message, '→ Bitte SQL im Supabase-Editor ausführen!');
+      else console.log('Tabelle sessions OK');
     }
 
     // ── Antwort hinzufügen ──
@@ -486,7 +506,7 @@
           document.getElementById('winnerName').textContent = answers[getWinnerAtTop(currentAngle)].label;
           spinning = false;
           document.getElementById('spinBtn').disabled = false;
-          pollInterval = setInterval(loadAll, 3000);
+          pollInterval = setInterval(loadAll, 2000); console.log("Polling gestartet (alle 2s)");
         }
       })(startTime);
     }
