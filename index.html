@@ -299,8 +299,9 @@
 
       await loadAnswers();
 
-      // Echtzeit-Kanal für diese Session
+      // Echtzeit-Kanal für diese Session (Supabase JS v2)
       sb
+        .channel('answers-' + sessionId)
         .on('postgres_changes', {
           event: '*',
           schema: 'public',
